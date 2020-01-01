@@ -60,7 +60,7 @@ struct screen {
 struct firework FW[FIREWORKS];
 struct screen sc;
 
-int mix_colors( int c1, int c2 ){
+int mix_colors( int c1, int c2, int prop ){
 
     int r1,g1,b1,r2,g2,b2;
 
@@ -72,9 +72,9 @@ int mix_colors( int c1, int c2 ){
     b2 = (c2 )  & 0xff;
 
     return (
-        ((r1+r2)/2)<<16 |
-        ((g1+g2)/2)<<8 |
-        ((b1+b2)/2)<<0
+        (( prop * r1 + ( 0xff - prop ) * r2 ) / 510 )<<16 |
+        (( prop * g1 + ( 0xff - prop ) * g2 ) / 510 )<<8 |
+        (( prop * b1 + ( 0xff - prop ) * b2 ) / 510 )<<0
     );
 
 }
@@ -85,7 +85,7 @@ int clear_screen(){
        for ( x = 0; x < sc.cols; x++ ){
             sc.cells[ y * sc.cols + x ].ch = ' ';
             sc.cells[ y * sc.cols + x ].fg = 0xffffff;
-            sc.cells[ y * sc.cols + x ].bg = mix_colors( 0x000000, sc.cells[ y * sc.cols + x ].bg );
+            sc.cells[ y * sc.cols + x ].bg = mix_colors( 0x000000, sc.cells[ y * sc.cols + x ].bg, 0x08 );
        }
    }
 }
@@ -114,24 +114,33 @@ int draw_fireworks(){
         if ( y < 0 ) continue;
         if ( y >= sc.rows ) continue;
         sc.cells[ y * sc.cols + x ].ch = ch;
-        sc.cells[ y * sc.cols + x ].fg = c;
+        sc.cells[ y * sc.cols + x ].fg = 0xffffff;
         sc.cells[ y * sc.cols + x ].bg = c;
     }
 }
 
 int draw_screen(){
    int x,y;
-   printf("\e[H\e[J");
+   int fg, fg2, bg, bg2;
+   int cellid;
+   printf("\e[H\e[3J");
    for ( y = 0; y <= sc.rows-1; y++ ){
        for ( x = 0; x <= sc.cols-1; x++ ){
-           int fg = sc.cells[ y * sc.cols + x ].fg;
-           int bg = sc.cells[ y * sc.cols + x ].bg;
-           int ch = sc.cells[ y * sc.cols + x ].ch;
-           printf( "\e[38;2;%d;%d;%dm\e[48;2;%d;%d;%dm%c",
-            fg >> 16, (fg >> 8) & 0xff, fg & 0xff,
-            bg >> 16, (bg >> 8) & 0xff, bg & 0xff,
-            ch
-            );
+           cellid = y * sc.cols + x;
+           fg = sc.cells[ cellid ].fg;
+           if ( cellid > 0 ) fg2 = sc.cells[ cellid - 1 ].fg;
+
+           bg = sc.cells[ cellid ].bg;
+           if ( cellid > 0 ) bg2 = sc.cells[ cellid - 1 ].bg;
+
+           int ch = sc.cells[ cellid ].ch;
+           if ( cellid > 0 && fg != fg2 ) printf( "\e[38;2;%d;%d;%dm", 
+            fg >> 16, (fg >> 8) & 0xff, fg & 0xff
+           );
+           if ( cellid > 0 && bg != bg2 ) printf( "\e[48;2;%d;%d;%dm",
+            bg >> 16, (bg >> 8) & 0xff, bg & 0xff
+           );
+           putchar(ch);
        }
        printf("\n");
    }
