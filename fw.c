@@ -139,6 +139,7 @@ int draw_stats(){
     int pos;
     pos = 0;
     for ( i=0; i<FIREWORKS; i++ ){
+        if ( i > sc.cols ) break;
         int bg, fg;
         int chr;
         switch( FW[i].state ){
