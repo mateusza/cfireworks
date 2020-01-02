@@ -3,9 +3,10 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <time.h>
+#include <sys/time.h>
 
-#define FIREWORKS 100
-#define G 1.8
+#define FIREWORKS 256
+#define G 3.8
 
 #define a_sin(x) ( SINE[(int)( (720 + (x)) % 360 )] )
 #define a_cos(x) ( SINE[(int)( (720+(x)+90) % 360 )] )
@@ -15,6 +16,7 @@ double SINE[360] = { 0.000, 0.017, 0.035, 0.052, 0.070, 0.087, 0.105, 0.122, 0.1
 int huetocolor( int hue ){
     int color;
     int x;
+    hue += 360;
     hue %= 360;
     x = (int)( ((double)( hue % 60 ))/60.0*255.0 );
     
@@ -32,7 +34,7 @@ struct firework {
     fw_state state;
     int flares;
     int subflares;
-    int subflare_levels;
+    int is_flare;
     double hue;
     double huestep;
     double x;
@@ -61,22 +63,28 @@ struct firework FW[FIREWORKS];
 struct screen sc;
 
 int mix_colors( int c1, int c2, int prop ){
-
     int r1,g1,b1,r2,g2,b2;
-
     r1 = c1 >> 16;
     r2 = c2 >> 16;
     g1 = (c1 >> 8)  & 0xff;
     g2 = (c2 >> 8)  & 0xff;
     b1 = (c1 )  & 0xff;
     b2 = (c2 )  & 0xff;
-
     return (
-        (( prop * r1 + ( 0xff - prop ) * r2 ) / 510 )<<16 |
-        (( prop * g1 + ( 0xff - prop ) * g2 ) / 510 )<<8 |
-        (( prop * b1 + ( 0xff - prop ) * b2 ) / 510 )<<0
-    );
+        (( prop * r1 + ( 0xff - prop ) * r2 ) / 255 )<<16 |
+        (( prop * g1 + ( 0xff - prop ) * g2 ) / 255 )<<8 |
+        (( prop * b1 + ( 0xff - prop ) * b2 ) / 255 )<<0 );
+}
 
+int add_colors( int c1, int c2 ){
+    int r,g,b;
+    r = ( (c1 >> 16) + (c2 >> 16) );
+    r = ( r > 255 ) ? 255 : r;
+    g = ((c1 >> 8)  & 0xff ) + ( (c2 >> 8)  & 0xff );
+    g = ( g > 255 ) ? 255 : g;
+    b = ((c1 )  & 0xff ) + ((c2 )  & 0xff );
+    b = ( b > 255 ) ? 255 : b;
+    return ( r<<16 ) | ( g<<8 ) | ( b );
 }
 
 int clear_screen(){
@@ -84,8 +92,8 @@ int clear_screen(){
    for ( y = 0; y < sc.rows; y++ ){
        for ( x = 0; x < sc.cols; x++ ){
             sc.cells[ y * sc.cols + x ].ch = ' ';
-            sc.cells[ y * sc.cols + x ].fg = 0xffffff;
-            sc.cells[ y * sc.cols + x ].bg = mix_colors( 0x000000, sc.cells[ y * sc.cols + x ].bg, 0x08 );
+            sc.cells[ y * sc.cols + x ].fg = 0x000000;
+            sc.cells[ y * sc.cols + x ].bg = mix_colors( 0x000000, sc.cells[ y * sc.cols + x ].bg, 0x80 );
        }
    }
 }
@@ -103,19 +111,58 @@ int draw_fireworks(){
     int i;
     for ( i = 0; i < FIREWORKS; i++ ){
         if ( INACTIVE == FW[i].state ) continue;
-        int x,y,c,ch;
+        int x,y,c,c2,ch;
         x = (int)((FW[i].x));
         y = (int)((FW[i].y));
         c = huetocolor( FW[i].hue );
-        if ( FLYING == FW[i].state ) ch = ':';
+        c2 = mix_colors( 0xffffff, c, 0x80 );
+        if ( FLYING == FW[i].state ) ch = '|';
         if ( FALLING == FW[i].state ) ch = '*';
         if ( x < 0 ) continue;
         if ( x >= sc.cols ) continue;
         if ( y < 0 ) continue;
         if ( y >= sc.rows ) continue;
+
+        if ( FW[i].t_fade < 2.0 ){
+            int ratio = 255.0 * ( FW[i].t_fade/2.0 );
+            c = mix_colors( c, 0x000000, ratio );
+            c2 = mix_colors( c2, 0x000000, ratio );
+        }
+
         sc.cells[ y * sc.cols + x ].ch = ch;
-        sc.cells[ y * sc.cols + x ].fg = 0xffffff;
-        sc.cells[ y * sc.cols + x ].bg = c;
+        sc.cells[ y * sc.cols + x ].fg = add_colors( sc.cells[ y * sc.cols + x ].fg, c2 );
+        sc.cells[ y * sc.cols + x ].bg = add_colors( sc.cells[ y * sc.cols + x ].bg, c );
+    }
+}
+int draw_stats(){
+    int i;
+    int pos;
+    pos = 0;
+    for ( i=0; i<FIREWORKS; i++ ){
+        int bg, fg;
+        int chr;
+        switch( FW[i].state ){
+            case INACTIVE:
+                fg = 0x888888;
+                bg = 0x000000;
+                chr = '-';
+                continue;
+                break;
+            case FLYING:
+                fg = 0xffaa00;
+                bg = 0x000000;
+                chr = '0' + ((int)( FW[i].t_expl ) % 10);
+                break;
+            case FALLING:
+                bg = huetocolor( FW[i].hue );
+                fg = 0x000000;
+                chr = '0' + ((int)( FW[i].t_fade ) % 10);
+                break;
+        }
+        sc.cells[ pos ].bg = bg;
+        sc.cells[ pos ].fg = fg;
+        sc.cells[ pos ].ch = chr;
+        pos++;
     }
 }
 
@@ -123,9 +170,10 @@ int draw_screen(){
    int x,y;
    int fg, fg2, bg, bg2;
    int cellid;
-   printf("\e[H\e[3J");
-   for ( y = 0; y <= sc.rows-1; y++ ){
-       for ( x = 0; x <= sc.cols-1; x++ ){
+   printf("\e[?25l");
+   for ( y = 0; y < sc.rows; y++ ){
+       printf("\e[%d;1H", y + 1);
+       for ( x = 0; x < sc.cols; x++ ){
            cellid = y * sc.cols + x;
            fg = sc.cells[ cellid ].fg;
            if ( cellid > 0 ) fg2 = sc.cells[ cellid - 1 ].fg;
@@ -140,11 +188,14 @@ int draw_screen(){
            if ( cellid > 0 && bg != bg2 ) printf( "\e[48;2;%d;%d;%dm",
             bg >> 16, (bg >> 8) & 0xff, bg & 0xff
            );
+
+           if ( x == 0 ){
+               ch = '0' + (y%10);
+           }
+
            putchar(ch);
        }
-       printf("\n");
    }
-   printf("\n");
 }
 
 int free_firework(){
@@ -153,7 +204,10 @@ int free_firework(){
         if ( INACTIVE == FW[i].state ) return i;
     }
     for ( i = 0; i < FIREWORKS; i++ ){
-        if ( FALLING == FW[i].state && FW[i].t_fade < 2.0 ) return i;
+        if ( FALLING == FW[i].state && FW[i].t_fade < 1.0 ) return i;
+    }
+    for ( i = 0; i < FIREWORKS; i++ ){
+        if ( FALLING == FW[i].state ) return i;
     }
     return rand() % FIREWORKS;
 }
@@ -192,19 +246,22 @@ int main(){
         gettimeofday( &tv, NULL );
         nowtime = tv.tv_sec + tv.tv_usec/1000000.0;
         dtime = ( nowtime - lasttime ) + 0.000001;
-        if ( 0 == rand() % 10 ){
+        if ( 0 == rand() % 20 ){ // spawn new firework
             int fnum = free_firework();
             FW[fnum].state = FLYING;
             FW[fnum].x = rand() % sc.cols;
             FW[fnum].y = sc.rows;
             FW[fnum].vx = 0.0;
             FW[fnum].vy = 0.0;
-            FW[fnum].ax = (rand()%100)/100.0 - 0.5;
-            FW[fnum].ay = 10.0;
+            FW[fnum].ax = (rand()%200)/100.0 - 1.0;
+            FW[fnum].ay = 20.0;
             FW[fnum].hue = 20.0 + rand() % 20;
-            FW[fnum].huestep = 7.0;
+            FW[fnum].huestep = 0.5;
             FW[fnum].t_expl = 2.0 + (rand() % 100)/100.0;
-            FW[fnum].flares = 6 + (rand() % 16);
+            FW[fnum].t_fade = 999999;
+            FW[fnum].flares = 6 + (rand() % 8);
+            FW[fnum].subflares = ( rand() % 10 == 0 ) ? ( 1 + (rand() % 4) ) : 0;
+            FW[fnum].is_flare = 0;
         }
 
         for ( i=0; i<FIREWORKS; i++ ){
@@ -216,17 +273,35 @@ int main(){
             FW[i].t_expl -= dtime;
             FW[i].t_fade -= dtime;
             FW[i].hue += FW[i].huestep;
+            FW[i].ay *= 0.97;
 
-            if ( FLYING == FW[i].state && FW[i].t_expl < 0.0 ){
+            if ( FW[i].y > sc.rows ){
                 FW[i].state = INACTIVE;
+                continue;
+            }
+
+            if ( FW[i].t_expl < 0.0 ){ // explode
+                if ( rand() % 3 == 0 ){ // respawn multishot
+                    FW[i].t_expl = 0.1;
+                }
+                else {
+                    FW[i].state = INACTIVE;
+                }
                 int j;
-                double flarehue = rand()%360;
-                double flarehuestep = 10.0* (( rand() % 100 ) / 50.0 - 1.0);
-                flash = 1;
+                double flarehue;
+                double flarehuestep;
+
+                flarehue = ( FW[i].is_flare ) ? FW[i].hue : (rand()%360);
+                flarehuestep = ( FW[i].is_flare ) ? FW[i].huestep : (( rand() % 100 ) / 50.0 - 1.0);
+
+                if ( FW[i].is_flare == 0 ){
+                    flash = 1;
+                }
                 for ( j=0; j<FW[i].flares; j++ ){
                     int fnum = free_firework();
                     double v_expl;
-                    v_expl = 2.0 + ( rand() % 100 ) / 50.0;
+                    v_expl = 4.0 + ( rand() % 400 ) / 100.0;
+                    FW[fnum].is_flare = 1;
                     FW[fnum].state = FALLING;
                     FW[fnum].x = FW[i].x; 
                     FW[fnum].y = FW[i].y;
@@ -236,7 +311,13 @@ int main(){
                     FW[fnum].ay = 0.0;
                     FW[fnum].hue = flarehue;
                     FW[fnum].huestep = flarehuestep;
-                    FW[fnum].t_fade = 5.0;
+                    FW[fnum].t_fade = 2.0 + (rand() % 3);
+                    FW[fnum].t_expl = 999999;
+                    if ( FW[i].subflares > 0 ){
+                        FW[fnum].t_expl = 0.5 + (rand()%10)/10.0;
+                        FW[fnum].flares = FW[i].subflares;
+                    }
+
                 }
             }
 
@@ -264,6 +345,7 @@ int main(){
         if ( flash ){
             flash_screen();
         }
+        draw_stats();
         draw_screen();
 
         fflush( stdout );
