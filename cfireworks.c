@@ -234,6 +234,7 @@ int main(){
 
     sc.cells = malloc ( sizeof( struct acell ) * sc.rows * sc.cols );
 
+    srand( (int)(void*)sc.cells );
     double nowtime;
     double lasttime;
 
